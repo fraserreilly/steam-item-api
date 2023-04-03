@@ -1,19 +1,29 @@
-import { getAllItems } from './databases';
-import { getItemWebData, getItemMarketData } from './apis';
+import { getItemMarketData } from './apis';
+import { addOrUpdateItem } from './databases';
+import { sleep, time, log } from './utilities';
 
-const updateItems = async (language: string) => {
-  const items = await getAllItems();
+const updateItems = async (appID: number) => {
+  log.info(`updating firebase appID: ${appID}...`);
+  const items: any = await getItemMarketData(appID, 'desc', 'default');
+  log.info(
+    `updating firebase appID: ${appID} with ${
+      Object.keys(items).length
+    } items...`
+  );
 
-  for (const item of items) {
-    if (!item.collection) {
-      await getItemWebData(item.appID, item.itemID, language);
-    }
+  for (let [itemName, itemData] of Object.entries(items)) {
+    log.debug(
+      `pushing item: ${Buffer.from(
+        itemName,
+        'base64'
+      ).toString()}: ${JSON.stringify(itemData)} to firebase...`
+    );
+    await addOrUpdateItem(appID, itemName, itemData);
   }
 };
 
-async function main() {
-  await getItemMarketData(730, 'desc', 'default');
-  await updateItems('english');
+async function run() {
+  await updateItems(730);
 }
 
-main();
+run();

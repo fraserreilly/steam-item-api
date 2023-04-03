@@ -1,7 +1,6 @@
 import * as dotenv from 'dotenv';
 import axios from 'axios';
 import { log, time, sleep } from '../utilities';
-import { addOrUpdateItem } from '../databases';
 
 dotenv.config();
 
@@ -9,16 +8,21 @@ export const getItemWebData = async (
   appID: number,
   itemID: number,
   language: string
-): Promise<void> => {
+): Promise<{
+  Collection: string | null;
+  Rarity: string | null;
+  Wear: string | null;
+}> => {
   let repeatedErrors = 0;
   let parameters = {
     key: process.env.STEAMAPIKey,
     appid: appID,
+    class_count: 1,
     classid0: itemID,
     language: language,
   };
 
-  while (true && repeatedErrors < 10) {
+  while (repeatedErrors < 10) {
     try {
       const response = await axios.get(
         'https://api.steampowered.com/ISteamEconomy/GetAssetClassInfo/v1/',
@@ -27,34 +31,40 @@ export const getItemWebData = async (
         }
       );
 
+      await sleep(time(5, 'seconds'));
+
       if (response.status !== 200) {
-        throw new Error(`Invalid response status code ${response.status}`);
+        log.error(`Invalid response status code ${response.status}`);
       }
 
       if (!response.data || !response.data.result) {
-        throw new Error('Invalid response data');
+        log.error('Invalid response data');
       }
 
       if (response.data.result.length === 0) {
-        break;
+        log.error('No items found');
       }
+      const tags: Record<any, any> = Object.values(
+        response.data.result[itemID].tags
+      );
+      const collection: string =
+        tags.find((tag: Record<any, any>) => tag.category_name === 'Collection')
+          ?.name || '';
+      const rarity: string =
+        tags.find((tag: Record<any, any>) => tag.category_name === 'Quality')
+          ?.name || '';
+      const wear: string =
+        tags.find((tag: Record<any, any>) => tag.category_name === 'Exterior')
+          ?.name || '';
 
-      const marketName = response.data.result[itemID].market_name;
       const description = {
-        collection: response.data.result[itemID].tags.find(
-          (tag: any) => tag.category_name === 'Collection'
-        ).name,
-        rarity: response.data.result[itemID].tags.find(
-          (tag: any) => tag.category_name === 'Quality'
-        ).name,
-        wear: response.data.result[itemID].tags.find(
-          (tag: any) => tag.category_name === 'Exterior'
-        ).name,
+        Collection: collection,
+        Rarity: rarity,
+        Wear: wear,
       };
 
-      addOrUpdateItem(marketName, description);
       repeatedErrors = 0;
-      sleep(time(5, 'seconds'));
+      return description;
     } catch (error: any) {
       if (
         error.response &&
@@ -64,10 +74,12 @@ export const getItemWebData = async (
           'Rate limit exceeded or server error, sleeping for 5 minutes.'
         );
         await sleep(time(5, 'minutes'));
+        repeatedErrors++;
       } else {
-        log.error(error);
+        log.error(`Failed to retrieve item web data: ${error}`);
         break;
       }
     }
   }
+  return { Collection: null, Rarity: null, Wear: null };
 };

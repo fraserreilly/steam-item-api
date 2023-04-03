@@ -7,15 +7,19 @@ admin.initializeApp({
 
 const firestoreDB = admin.firestore();
 
-const itemsCollectionRef = firestoreDB.collection('items');
-
-export const addOrUpdateItem = async (name: string, data: any) => {
-  const itemRef = itemsCollectionRef.doc(name);
+export const addOrUpdateItem = async (
+  appID: number,
+  name: string,
+  data: any
+) => {
+  const appCollectionRef = firestoreDB.collection(`${appID}`);
+  const itemRef = appCollectionRef.doc(name);
   await itemRef.set(data, { merge: true });
 };
 
-export const getItem = async (name: string) => {
-  const itemRef = itemsCollectionRef.doc(name);
+export const getItem = async (appID: number, name: string) => {
+  const appCollectionRef = firestoreDB.collection(`${appID}`);
+  const itemRef = appCollectionRef.doc(name);
   const itemDoc = await itemRef.get();
   if (itemDoc.exists) {
     return itemDoc.data();
@@ -24,8 +28,9 @@ export const getItem = async (name: string) => {
   }
 };
 
-export const getAllItems = async () => {
-  const itemsSnapshot = await itemsCollectionRef.get();
+export const getAllItems = async (appID: number) => {
+  const appCollectionRef = firestoreDB.collection(`${appID}`);
+  const itemsSnapshot = await appCollectionRef.get();
   const items: any = {};
   itemsSnapshot.forEach((itemDoc) => {
     items[itemDoc.id] = itemDoc.data();
@@ -33,7 +38,8 @@ export const getAllItems = async () => {
   return items;
 };
 
-export const deleteItem = async (name: string) => {
-  const itemRef = itemsCollectionRef.doc(name);
+export const deleteItem = async (appID: number, name: string) => {
+  const appCollectionRef = firestoreDB.collection(`${appID}`);
+  const itemRef = appCollectionRef.doc(name);
   await itemRef.delete();
 };

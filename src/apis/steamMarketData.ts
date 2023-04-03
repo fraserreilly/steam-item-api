@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { log, time, sleep } from '../utilities';
-import { addOrUpdateItem } from '../databases';
+import { getItemWebData } from './steamWebData';
+import { getAllItems } from '../databases';
 
 type SteamRequestParameters = {
   appid: number;
@@ -31,7 +32,11 @@ export const getItemMarketData = async (
     start: 0,
   };
 
-  while (true && repeatedErrors < 10) {
+  log.debug(`Requesting cached data from appID: ${appID}...`);
+
+  const cache: any = await getAllItems(appID);
+
+  while (repeatedErrors < 10) {
     try {
       const response = await axios.get(
         'https://steamcommunity.com/market/search/render',
@@ -39,6 +44,14 @@ export const getItemMarketData = async (
           params: parameters,
         }
       );
+
+      log.debug(
+        `Requesting market data range: ${parameters.start} to ${
+          parameters.start + 100
+        } for appID: ${appID}...`
+      );
+
+      await sleep(time(5, 'seconds'));
 
       if (response.status !== 200) {
         throw new Error(`Invalid response status code ${response.status}`);
@@ -52,7 +65,8 @@ export const getItemMarketData = async (
         break;
       }
 
-      const itemsToAdd: any[] = response.data.results.map((item: any) => {
+      const itemsToAdd: Record<any, any> = {};
+      response.data.results.forEach((item: any) => {
         const name: string = item.name;
         const price: number = parseFloat(
           item.sell_price_text.replace(/,|[$]/g, '')
@@ -60,32 +74,85 @@ export const getItemMarketData = async (
         const listings: number = item.sell_listings;
         const image: string =
           steamItemImageUrl + item.asset_description.icon_url;
-        const classID: number = parseInt(item.asset_description.classid);
+        const itemID: number = parseInt(item.asset_description.classid);
 
-        return {
-          name: name,
-          data: {
-            Details: {
-              Image: image,
-              Listings: { [currentTime]: listings },
-              Price: { [currentTime]: price },
-              ItemID: classID,
-            },
-          },
+        itemsToAdd[Buffer.from(name).toString('base64')] = {
+          Image: image,
+          Listings: { [currentTime]: listings },
+          Price: { [currentTime]: price },
+          ItemID: itemID,
         };
       });
 
-      for (let i = 0; i < itemsToAdd.length; i += 100) {
-        const batchToAdd = itemsToAdd.slice(i, i + 100);
-        await Promise.all(
-          batchToAdd.map(async (item) => {
-            try {
-              await addOrUpdateItem(item.name, item.data);
-            } catch (error: any) {
-              log.error(`Error adding/updating item ${item.name}: ${error}`);
-            }
-          })
-        );
+      for (let [itemName, itemData] of Object.entries(itemsToAdd)) {
+        const cachedItem = cache[itemName];
+
+        try {
+          let additionalData: {
+            Collection: string | null;
+            Rarity: string | null;
+            Wear: string | null;
+          } = {
+            Collection: cachedItem ? cachedItem.Collection : null,
+            Rarity: cachedItem ? cachedItem.Rarity : null,
+            Wear: cachedItem ? cachedItem.Wear : null,
+          };
+          if (
+            cachedItem &&
+            cachedItem.Collection &&
+            cachedItem.Rarity &&
+            cachedItem.Wear
+          ) {
+            log.debug(`Skipping additional data fetch for ${itemName}`);
+          } else {
+            additionalData = await getItemWebData(appID, itemData.ItemID, 'en');
+            log.debug(
+              `Adding/updating item: ${Buffer.from(
+                itemName,
+                'base64'
+              ).toString()} with additional data: ${JSON.stringify(
+                additionalData
+              )}...`
+            );
+          }
+
+          itemData = {
+            ...itemData, // keep existing details
+            ...additionalData, // add additional data to details
+          };
+
+          // Update item in cache
+          if (cachedItem) {
+            const currentListings = cachedItem.Listings;
+            const currentPrice = cachedItem.Price;
+
+            // Add new data to existing data
+            itemData.Listings = {
+              ...currentListings,
+              [currentTime]: itemData.Listings[currentTime],
+            };
+            itemData.Price = {
+              ...currentPrice,
+              [currentTime]: itemData.Price[currentTime],
+            };
+
+            // Merge with existing data
+            cache[itemName] = {
+              ...cachedItem,
+              ...itemData,
+            };
+          } else {
+            // Add new item to cache
+            cache[itemName] = itemData;
+          }
+        } catch (error: any) {
+          log.error(
+            `Error adding/updating item ${Buffer.from(
+              itemName,
+              'base64'
+            ).toString()}: ${error}`
+          );
+        }
       }
 
       parameters.start += 100;
@@ -106,4 +173,5 @@ export const getItemMarketData = async (
       }
     }
   }
+  return cache;
 };
